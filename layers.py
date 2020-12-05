@@ -69,6 +69,10 @@ class DetectionLayer(nn.Module):
         # Create the grid offsets
         grid = torch.arange(grid_size).type(torch.FloatTensor)
         a, b = torch.meshgrid(grid, grid)
+
+        # PyTorch meshgrid works in ij indexing, numpy in xy
+        a = a.transpose(0, 1)
+        b = b.transpose(0, 1)
         xy_offset = torch.cat((a.reshape(-1, 1), b.reshape(-1, 1)), 1).repeat(1, len(anchors)).view(-1, 2).unsqueeze(0)
         xy_offset = xy_offset.to(x.device)
 
@@ -85,7 +89,8 @@ class DetectionLayer(nn.Module):
         x[:, :, 5:] = torch.sigmoid(x[:, :, 5:])
 
         # Sigmoid & scale the confidences
-        x[:, :, 4] = torch.sigmoid(x[:, :, 4]) * stride
+        x[:, :, 4] = torch.sigmoid(x[:, :, 4])
+        x[:, :, :4] *= stride
         return x
 
 
@@ -111,10 +116,20 @@ class TinyYoloV3(nn.Module):
         self.builder = builder
         if not self.builder.is_built:
             self.builder.build()
+        self.ops = self.builder.ops
 
     def to(self, *args, **kwargs):
         super().to(*args, **kwargs)
         self.builder.ops.to(*args, **kwargs)
+
+    def eval(self):
+        x = super().eval()
+        self.builder.ops = self.builder.ops.eval()
+        return x
+
+    def disable_grad(self):
+        for op in self.builder.ops:
+            op.requires_grad_(False)
 
     def forward(self, x):
         # Need to cache outputs for route
