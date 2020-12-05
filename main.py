@@ -1,3 +1,4 @@
+import pickle as pkl
 import cv2
 import matplotlib.pyplot as plt
 import torch
@@ -9,7 +10,7 @@ from utils import (
     load_image, handle_result)
 
 
-def plot_predictions(cv_images, classes, batch_predictions, pallete=None):
+def plot_predictions(cv_images, classes, batch_predictions, palette=None):
     pad = 3
     for i, img in enumerate(cv_images):
         pred = batch_predictions[i]
@@ -18,7 +19,7 @@ def plot_predictions(cv_images, classes, batch_predictions, pallete=None):
             class_id = int(pred[j, 4])
             class_nm = classes[class_id]
 
-            colour = pallete[class_id] if pallete is not None else (0, 255, 0)
+            colour = palette[class_id] if palette is not None else (0, 255, 0)
 
             tlx, tly, brx, bry, conf = pred[j, :5]
 
@@ -84,8 +85,10 @@ if __name__ == "__main__":
         # model.disable_grad()
         predictions = model(batch)
 
-        batch_predictions = handle_result(predictions, 0.2, 0.4)
-        print_predictions(image_filenames, coco_names, batch_predictions)
-        plot_predictions(raw_images, coco_names, batch_predictions)
+    palette = pkl.load(open("palette", "rb"))
+
+    batch_predictions = handle_result(predictions, 0.5, 0.4)
+    print_predictions(image_filenames, coco_names, batch_predictions)
+    plot_predictions(raw_images, coco_names, batch_predictions, palette)
 
     print(builder)
