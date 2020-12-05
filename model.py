@@ -2,7 +2,8 @@ import torch.nn as nn
 
 from layers import (
     DetectionLayer,
-    RouteLayer
+    RouteLayer,
+    MaxPoolStride1
 )
 
 
@@ -46,7 +47,7 @@ def parse_cfg(cfgfile):
 class TinyYoloBuilder(object):
 
     def __init__(self, config_file, input_depth=3):
-        self.model = nn.ModuleList()
+        self.ops = nn.ModuleList()
         self._config_file = config_file
         self.hyper_params = None
         self._blocks = None
@@ -54,6 +55,7 @@ class TinyYoloBuilder(object):
         self._input_depth = input_depth
 
         self._filter_history = []
+        self.is_built = False
 
     def load_config(self):
         blocks = parse_cfg(self._config_file)
@@ -62,14 +64,16 @@ class TinyYoloBuilder(object):
 
     def build(self):
         self.load_config()
-
         for idx, b in enumerate(self._blocks):
             parser = self._get_parser(b)
             block, n_filters = parser(idx, b)
             self.update_filter_history(n_filters)
-            self.model.append(block)
+            self.ops.append(block)
+        self.is_built = True
 
-        return self.model
+    @property
+    def blocks(self):
+        return self._blocks
 
     @property
     def current_in_filter(self):
@@ -125,17 +129,20 @@ class TinyYoloBuilder(object):
         k_size = int(config['size'])
         padding = k_size // 2 if bool(int(config['pad'])) else 0
 
+        use_batchnorm = bool(int(config.get('batch_normalize', 0)))
+        use_bias = not use_batchnorm
+
         conv = nn.Conv2d(self.current_in_filter,
                          n_filters,
                          k_size,
                          stride,
-                         padding)
+                         padding,
+                         bias=use_bias)
 
         # Match the layer names with the reference implementation so we can
         # load pretrained weights
         output.add_module(f"conv_{idx}", conv)
 
-        use_batchnorm = bool(int(config.get('batch_normalize', 0)))
         if use_batchnorm:
             output.add_module(f"batch_norm_{idx}", nn.BatchNorm2d(n_filters))
 
@@ -149,21 +156,19 @@ class TinyYoloBuilder(object):
         return output, n_filters
 
     def _parser_upsample(self, idx, _):
-        output = nn.Sequential()
         up = nn.Upsample(scale_factor=2, mode="nearest")
-        output.add_module(f"upsample_{idx}", up)
-        return output, None
+        return up, None
 
     def _parser_maxpool(self, idx, config):
-        output = nn.Sequential()
         stride = int(config['stride'])
         k_size = int(config['size'])
-        mp = nn.MaxPool2d(k_size, stride)
-        output.add_module(f"maxpool_{idx}", mp)
-        return output, None
+        if stride > 1:
+            mp = nn.MaxPool2d(k_size, stride)
+        else:
+            mp = MaxPoolStride1(k_size)
+        return mp, None
 
     def _parser_route(self, idx, config):
-        output = nn.Sequential()
         layer_idx = [int(c.strip()) for c in config['layers'].split(',')]
 
         start = layer_idx[0]
@@ -177,11 +182,9 @@ class TinyYoloBuilder(object):
         if end is not None:
             n_filters += self._filter_history[rt.end_idx]
 
-        output.add_module(f"route_{idx}", rt)
-        return output, n_filters
+        return rt, n_filters
 
     def _parser_yolo(self, idx, config):
-        output = nn.Sequential()
         mask = [int(i.strip()) for i in config['mask'].split(',')]
 
         def parse_masked_anchors(raw_anchors, mask):
@@ -190,6 +193,6 @@ class TinyYoloBuilder(object):
             return [a[i] for i in mask]
 
         anchors = parse_masked_anchors(config['anchors'], mask)
-        det = DetectionLayer(anchors)
-        output.add_module(f"Detection_{idx}", det)
-        return output, None
+        det = DetectionLayer(anchors, int(config['classes']), int(self.hyper_params['height']))
+        # TODO: Not sure None is the right output for this...
+        return det, None
