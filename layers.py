@@ -144,7 +144,10 @@ class TinyYoloV3(nn.Module):
             elif m_type == 'route':
                 x = self.builder.ops[i](output_map)
             elif m_type == 'yolo':
+
+                torch.save(x.detach(), f"prediction_in_{i}.pt")
                 x = self.builder.ops[i](x.detach())
+                torch.save(x.detach(), f"prediction_out_{i}.pt")
                 if detections is None:
                     detections = x
                 else:
